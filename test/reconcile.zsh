@@ -40,8 +40,8 @@ function :execute {
     integer created=0 annotated=0
 
     configuration=$(config | gojq --yaml-input '.')
-    check 'resync includes the matching watched-object snapshot' jq -e \
-        '.schedule == [{"name":"resync-reload","crontab":"* * * * *","includeSnapshotsFrom":["reload"]}]' <<< "$configuration"
+    check 'Marginal is event-driven even for a legacy resync field' jq -e \
+        'has("schedule") | not' <<< "$configuration"
     check 'missing Job is created' reconcile
     check 'exactly one Job was created' test $created -eq 1
     job_state='{"status":{"active":1}}'
@@ -51,7 +51,7 @@ function :execute {
     check 'a terminal failed Job waits for its own TTL' reconcile
     check 'failed Job was not replaced early' test $created -eq 1
     job_state=missing
-    check 'resync retries after TTL removes a failed Job' reconcile
+    check 'a later source event can retry a collected failed Job' reconcile
     check 'retry created a second Job' test $created -eq 2
     completed=$(gojq --yaml-input -r '.metadata.name' <<< "$created_manifest")
     object=$(jq --arg completed "$completed" '.metadata.annotations["marginal.flatheadmill.com/reload-tls"]=$completed' <<< "$object")

@@ -85,7 +85,7 @@ function schedule {
         shift 5
         hit=1
         # The binding already applied the watch's selector. Do not dispatch an
-        # event (or resync snapshot) to unrelated MarginalJobs of another kind.
+        # event to unrelated MarginalJobs of another kind.
         if (( ${#o_listener} )) && (( ! $o_listener[(Ie)$name] )); then
             hit=0
         fi
@@ -162,10 +162,10 @@ function schedule {
             # is started for this unique value. We never delete it:
             #   succeeded -> record completion now, then skip.
             #   present   -> in progress OR finished-but-not-yet-GC'd; leave it.
-            # A failed Job is retried only once its own ttlSecondsAfterFinished GC
-            # removes it, at which point it is missing below and recreated. So all
-            # retry policy lives in the MarginalJob (backoffLimit, activeDeadline,
-            # ttlSecondsAfterFinished) — the operator never forces it.
+            # Kubernetes retries Pods with exponential backoff within this Job's
+            # backoffLimit and activeDeadlineSeconds. A terminal failure is not
+            # completion. After GC, another source event or startup can recreate
+            # it; TTL deletion by itself is not a retry trigger.
             typeset job_json
             job_json=$(kubectl -n $namespace get job $slugged --ignore-not-found -o json) || return 1
             if [[ -n $job_json ]]; then

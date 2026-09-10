@@ -28,14 +28,6 @@ function :execute {
         binding=$(jq -r '.binding' <<< "$entry")
 
         case $btype in
-            Schedule)
-                # Opt-in resync replays current objects just like startup. A
-                # completed key or an existing Job suppresses duplicate work;
-                # after a failed Job's TTL expires, this creates its retry.
-                jq -c '.snapshots[]?[]?.object // empty' <<< "$entry" | while IFS= read -r obj; do
-                    schedule --event-type added --object "$obj" --listener "${binding#resync-}"
-                done
-                ;;
             Synchronization)
                 case $binding in
                     marginaljobs)

@@ -33,18 +33,12 @@ EOF
             apiVersion: (.spec.apiVersion // "v1"),
             kind: (.spec.kind // "Node"),
             objectFilter: (.spec.objectFilter // {}),
-            resyncSchedule: (.spec.resyncSchedule // null),
             events: (
                 [.spec.jobTemplates[]?.executeHookOnEvent[]?] | unique
             )
         }) as $bindings |
         {
             configVersion: "v1",
-            schedule: [$bindings[] | select(.resyncSchedule != null) | {
-                name: ("resync-" + .name),
-                crontab: .resyncSchedule,
-                includeSnapshotsFrom: [.name]
-            }],
             kubernetes: (
                 [$bindings[] | {
                     name: .name,
