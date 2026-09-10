@@ -67,3 +67,11 @@ We call it Marginal because it operates at the margins - the edge cases where st
 - Testing with fixture data
 - Shell Operator binding examples
 - Extending with new event sources
+# Periodic reconciliation
+
+Certificate reloads can opt into `spec.resyncSchedule: "* * * * *"`.
+The schedule replays current matching objects as `Added`, as startup does, so
+the job template must accept `Added` and use a content-based `uniqueKey`.
+Completed work and existing Jobs are skipped. Once TTL removes a failed Job,
+the next resync recreates it without needing another change to its source.
+Other MarginalJobs retain their event-only behavior.

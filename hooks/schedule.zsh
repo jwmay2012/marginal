@@ -84,6 +84,11 @@ function schedule {
         namespace=${1:-} name=${2:-} kind=${3:-} api_version=${4:-} selector_count=${5:-}
         shift 5
         hit=1
+        # The binding already applied the watch's selector. Do not dispatch an
+        # event (or resync snapshot) to unrelated MarginalJobs of another kind.
+        if (( ${#o_listener} )) && (( ! $o_listener[(Ie)$name] )); then
+            hit=0
+        fi
         while (( selector_count-- )); do
             key=${1:-} operator=${2:-} values_count=${3:-}
             shift 3
@@ -161,7 +166,8 @@ function schedule {
             # removes it, at which point it is missing below and recreated. So all
             # retry policy lives in the MarginalJob (backoffLimit, activeDeadline,
             # ttlSecondsAfterFinished) — the operator never forces it.
-            typeset job_json=$(kubectl -n $namespace get job $slugged -o json 2>/dev/null)
+            typeset job_json
+            job_json=$(kubectl -n $namespace get job $slugged --ignore-not-found -o json) || return 1
             if [[ -n $job_json ]]; then
                 if (( $(jq '.status.succeeded // 0' <<< $job_json) )); then
                     kubectl annotate --overwrite --namespace $object_namespace ${api_version:l} $object_name \
