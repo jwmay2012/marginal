@@ -79,7 +79,7 @@ function schedule {
     integer selector_count values_count hit namespace_count
     typeset kind api_version slugged manifest
     integer template_count filtered on_count cm_exists
-    typeset template_name template_namespace on=() jq cm_name cm_namespace
+    typeset template_name template_namespace on=() jq cm_name cm_namespace unique_value job_json completed_key
     while (( $# )); do
         namespace=${1:-} name=${2:-} kind=${3:-} api_version=${4:-} selector_count=${5:-}
         shift 5
@@ -146,14 +146,13 @@ function schedule {
                     *)        unique_key='.metadata.uid' ;;
                 esac
             fi
-            typeset unique_value
             unique_value=$(jq -r "$unique_key" <<< $o_object)
             slugged=$name-$template_name-$(slugged "$unique_value")
             # `marginal.flatheadmill.com/<name>-<template>` records the unique
             # value whose Job we last saw SUCCEED. It is written on completion,
             # not on creation, and outlives the Job's ttlSecondsAfterFinished GC,
             # so finished work is never repeated even once the Job is gone.
-            typeset completed_key="marginal.flatheadmill.com/${name}-${template_name}"
+            completed_key="marginal.flatheadmill.com/${name}-${template_name}"
             if [[ $(jq -r ".metadata.annotations[\"${completed_key}\"] // \"\"" <<< $o_object) == $slugged ]]; then
                 printf '%s\n' "marginal: $object_name completed for $name/$template_name ($slugged), skipping"
                 continue
@@ -166,7 +165,6 @@ function schedule {
             # backoffLimit and activeDeadlineSeconds. A terminal failure is not
             # completion. After GC, another source event or startup can recreate
             # it; TTL deletion by itself is not a retry trigger.
-            typeset job_json
             job_json=$(kubectl -n $namespace get job $slugged --ignore-not-found -o json) || return 1
             if [[ -n $job_json ]]; then
                 if (( $(jq '.status.succeeded // 0' <<< $job_json) )); then

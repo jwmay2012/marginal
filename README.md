@@ -75,3 +75,9 @@ Kubernetes Jobs own exponential Pod backoff through `backoffLimit` and
 Completion is recorded only after observed success. A terminal failed Job is
 left failed; TTL cleanup alone does not trigger another run. Use a content-based
 `uniqueKey` so later events and startup skip work that already succeeded.
+
+## Hook logging
+
+Hook locals are declared before event/template loops so Zsh cannot print values
+from an earlier iteration. `MARGINAL_DUMP_BINDING=1` reports object identities
+only; Secret data and annotations are omitted.

@@ -9,21 +9,28 @@ function :args {
 }
 
 function :execute {
+    setopt localoptions noxtrace noverbose
     if (( o_config )); then
         config
         return
     fi
 
     if [[ $MARGINAL_DUMP_BINDING = 1 ]]; then
-        jq < $BINDING_CONTEXT_PATH
+        # Debug output must not expose Secret data or embedded annotation values.
+        jq '
+            def identity: {apiVersion, kind, metadata: (.metadata | {name, namespace, uid, resourceVersion})};
+            map({type, binding, watchEvent, object: (.object // {} | identity),
+                objects: [.objects[]?.object | identity]})
+        ' < "$BINDING_CONTEXT_PATH"
         return
     fi
 
-    typeset binding_context
+    # Bare declarations print an existing value. Declare once, before the loops,
+    # so a later event cannot print the previous complete Secret object.
+    typeset binding_context entry btype binding obj object watch_event
     binding_context=$(< "$BINDING_CONTEXT_PATH")
 
     jq -c '.[]' <<< "$binding_context" | while IFS= read -r entry; do
-        typeset btype binding
         btype=$(jq -r '.type' <<< "$entry")
         binding=$(jq -r '.binding' <<< "$entry")
 
@@ -56,12 +63,10 @@ function :execute {
                         return
                         ;;
                     marginal-managed-jobs)
-                        typeset object
                         object=$(jq -c '.object' <<< "$entry")
                         record_completion --object "$object"
                         ;;
                     *)
-                        typeset watch_event object
                         watch_event=$(jq -r '.watchEvent' <<< "$entry")
                         object=$(jq -c '.object' <<< "$entry")
                         schedule --event-type "${watch_event:l}" --object "$object" --listener "$binding"
