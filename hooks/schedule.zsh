@@ -79,7 +79,7 @@ function schedule {
     integer selector_count values_count hit namespace_count
     typeset kind api_version slugged manifest
     integer template_count filtered on_count cm_exists
-    typeset template_name template_namespace on=() jq cm_name cm_namespace unique_value job_json completed_key origin
+    typeset template_name template_namespace on=() jq cm_name cm_namespace unique_value job_json completed_key
     while (( $# )); do
         namespace=${1:-} name=${2:-} kind=${3:-} api_version=${4:-} selector_count=${5:-}
         shift 5
@@ -167,13 +167,10 @@ function schedule {
             # it; TTL deletion by itself is not a retry trigger.
             job_json=$(kubectl -n $namespace get job $slugged --ignore-not-found -o json) || return 1
             if [[ -n $job_json ]]; then
-                if jq -e 'any(.status.conditions[]?; .type == "Complete" and .status == "True")' <<< "$job_json" >/dev/null; then
-                    origin=$(kubectl get ${api_version:l} "$object_name" --namespace "$object_namespace" --ignore-not-found -o name) || return 1
-                    if [[ -n $origin ]]; then
-                        kubectl annotate --overwrite --namespace $object_namespace ${api_version:l} $object_name \
-                            "${completed_key}=${slugged}" || return 1
-                        printf '%s\n' "marginal: $object_name job $slugged succeeded, marked complete"
-                    fi
+                if (( $(jq '.status.succeeded // 0' <<< $job_json) )); then
+                    kubectl annotate --overwrite --namespace $object_namespace ${api_version:l} $object_name \
+                        "${completed_key}=${slugged}" 2>/dev/null || true
+                    printf '%s\n' "marginal: $object_name job $slugged succeeded, marked complete"
                 else
                     printf '%s\n' "marginal: $object_name job $slugged present, skipping"
                 fi
@@ -231,11 +228,12 @@ function schedule {
                 gojq --yaml-output --argjson object $o_object $patch <<< $manifest
             )
             #! Completion is recorded when the Job's success is observed above,
-            #! never here on creation — a Job that later fails remains incomplete.
+            #! never here on creation — a Job that later fails is retried, not
+            #! mistaken for done.
             if (( MARGINAL_DRY_RUN )); then
                 printf '%s\n' "$manifest"
             else
-                kubectl apply -f - <<< $manifest || return 1
+                kubectl apply -f - <<< $manifest || abend 'unable to create job'
                 printf '%s\n' "marginal: $object_name started job $slugged for $name/$template_name"
             fi
         done

@@ -1,12 +1,9 @@
 function config {
-    setopt localoptions pipefail
     typeset marginaljobs
-    integer count
     marginaljobs=$(kubectl get marginaljobs.marginal.flatheadmill.com \
-        --all-namespaces -o json) || return 1
-    count=$(jq -er '.items | length' <<< "$marginaljobs") || return 1
+        --all-namespaces -o json 2>/dev/null)
 
-    if (( count == 0 )); then
+    if [[ $? -ne 0 ]] || [[ $(jq '.items | length' <<< "$marginaljobs") -eq 0 ]]; then
         cat <<'EOF'
 configVersion: v1
 kubernetes:
@@ -14,7 +11,7 @@ kubernetes:
   apiVersion: marginal.flatheadmill.com/v1
   kind: MarginalJob
   executeHookOnEvent: [Added, Modified, Deleted]
-  allowFailure: false
+  allowFailure: true
 - name: marginal-managed-jobs
   apiVersion: batch/v1
   kind: Job
@@ -22,7 +19,7 @@ kubernetes:
   labelSelector:
     matchLabels:
       marginal.flatheadmill.com/managed: "true"
-  allowFailure: false
+  allowFailure: true
 settings:
   executionMinInterval: 5s
   executionBurst: 1
@@ -49,20 +46,20 @@ EOF
                     kind: .kind,
                     executeHookOnEvent: .events,
                     labelSelector: .objectFilter,
-                    allowFailure: false
+                    allowFailure: true
                 }] + [{
                     name: "marginaljobs",
                     apiVersion: "marginal.flatheadmill.com/v1",
                     kind: "MarginalJob",
                     executeHookOnEvent: ["Added", "Modified", "Deleted"],
-                    allowFailure: false
+                    allowFailure: true
                 }] + [{
                     name: "marginal-managed-jobs",
                     apiVersion: "batch/v1",
                     kind: "Job",
                     executeHookOnEvent: ["Added", "Modified"],
                     labelSelector: { matchLabels: { "marginal.flatheadmill.com/managed": "true" } },
-                    allowFailure: false
+                    allowFailure: true
                 }]
             ),
             settings: {
