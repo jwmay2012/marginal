@@ -19,7 +19,7 @@ function record_completion {
     integer succeeded complete_cond
     succeeded=$(jq -r '.status.succeeded // 0' <<< $object)
     complete_cond=$(jq -r '[.status.conditions[]? | select(.type == "Complete" and .status == "True")] | length' <<< $object)
-    (( succeeded >= 1 || complete_cond >= 1 )) || return
+    (( succeeded >= 1 || complete_cond >= 1 )) || return 0
 
     typeset job_name origin_kind origin_namespace origin_name completed_key completed_value
     job_name=$(jq -r '.metadata.name // ""' <<< $object)
