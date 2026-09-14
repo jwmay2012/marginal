@@ -79,7 +79,7 @@ function schedule {
     integer selector_count values_count hit namespace_count
     typeset kind api_version slugged manifest
     integer template_count filtered on_count cm_exists
-    typeset template_name template_namespace on=() jq cm_name cm_namespace unique_value job_json completed_key
+    typeset template_name template_namespace on=() jq cm_name cm_namespace unique_value job_json completed_key origin
     while (( $# )); do
         namespace=${1:-} name=${2:-} kind=${3:-} api_version=${4:-} selector_count=${5:-}
         shift 5
@@ -135,18 +135,19 @@ function schedule {
             filter=${1:-} env=${2:-} unique_key=${3:-} patch=${4:-} template=${5:-}
             shift 5
             (( hit && $on[(Ie)$o_event_type] )) || continue
-            if [[ $o_event_type = modified ]]; then
-                printf '%s\n' 'would run jq'
+            if (( $on[(Ie)modified] )) && [[ -z $unique_key ]]; then
+                printf 'marginal: %s/%s template %s requires an explicit uniqueKey for Modified; skipping\n' \
+                    "$namespace" "$name" "$template_name" >&2
+                continue
+            fi
+            unique_key=${unique_key:-.metadata.uid}
+            if ! unique_value=$(jq -er "$unique_key" <<< "$o_object" 2>/dev/null) || [[ -z $unique_value ]]; then
+                printf 'marginal: %s/%s template %s has no valid uniqueKey yet; skipping\n' \
+                    "$namespace" "$name" "$template_name" >&2
+                continue
             fi
             env=$(jq "$env" <<< $o_object) || abend 'cannot evaluate env'
             env=$(jq 'if type == "object" then [to_entries[] | {name: .key, value: (.value | tostring)}] else . end' <<< "$env")
-            if [[ -z $unique_key ]]; then
-                case $o_event_type in
-                    modified) unique_key='.metadata.resourceVersion' ;;
-                    *)        unique_key='.metadata.uid' ;;
-                esac
-            fi
-            unique_value=$(jq -r "$unique_key" <<< $o_object)
             slugged=$name-$template_name-$(slugged "$unique_value")
             # `marginal.flatheadmill.com/<name>-<template>` records the unique
             # value whose Job we last saw SUCCEED. It is written on completion,
@@ -167,10 +168,13 @@ function schedule {
             # it; TTL deletion by itself is not a retry trigger.
             job_json=$(kubectl -n $namespace get job $slugged --ignore-not-found -o json) || return 1
             if [[ -n $job_json ]]; then
-                if (( $(jq '.status.succeeded // 0' <<< $job_json) )); then
-                    kubectl annotate --overwrite --namespace $object_namespace ${api_version:l} $object_name \
-                        "${completed_key}=${slugged}" 2>/dev/null || true
-                    printf '%s\n' "marginal: $object_name job $slugged succeeded, marked complete"
+                if jq -e 'any(.status.conditions[]?; .type == "Complete" and .status == "True")' <<< "$job_json" >/dev/null; then
+                    origin=$(kubectl get ${api_version:l} "$object_name" --namespace "$object_namespace" --ignore-not-found -o name) || return 1
+                    if [[ -n $origin ]]; then
+                        kubectl annotate --overwrite --namespace $object_namespace ${api_version:l} $object_name \
+                            "${completed_key}=${slugged}" || return 1
+                        printf '%s\n' "marginal: $object_name job $slugged succeeded, marked complete"
+                    fi
                 else
                     printf '%s\n' "marginal: $object_name job $slugged present, skipping"
                 fi
@@ -228,12 +232,11 @@ function schedule {
                 gojq --yaml-output --argjson object $o_object $patch <<< $manifest
             )
             #! Completion is recorded when the Job's success is observed above,
-            #! never here on creation — a Job that later fails is retried, not
-            #! mistaken for done.
+            #! never here on creation — a Job that later fails remains incomplete.
             if (( MARGINAL_DRY_RUN )); then
                 printf '%s\n' "$manifest"
             else
-                kubectl apply -f - <<< $manifest || abend 'unable to create job'
+                kubectl apply -f - <<< $manifest || return 1
                 printf '%s\n' "marginal: $object_name started job $slugged for $name/$template_name"
             fi
         done
