@@ -9,14 +9,14 @@ function :args {
 }
 
 function :execute {
-    setopt localoptions noxtrace noverbose
+    setopt localoptions pipefail noxtrace noverbose
     if (( o_config )); then
         config
         return
     fi
 
     if [[ $MARGINAL_DUMP_BINDING = 1 ]]; then
-        # Debug output must not expose Secret data or embedded annotation values.
+        # Debugging must not print Secret data, embedded manifests, or env values.
         jq '
             def identity: {apiVersion, kind, metadata: (.metadata | {name, namespace, uid, resourceVersion})};
             map({type, binding, watchEvent, object: (.object // {} | identity),
@@ -25,12 +25,14 @@ function :execute {
         return
     fi
 
-    # Bare declarations print an existing value. Declare once, before the loops,
-    # so a later event cannot print the previous complete Secret object.
-    typeset binding_context entry btype binding obj object watch_event
+    # Declare once: bare `typeset object` in a later iteration prints its old
+    # value, including the complete Secret, under normal Zsh options.
+    typeset binding_context entries entry btype binding objects obj object watch_event
+    integer failed=0 reconfigure=0
     binding_context=$(< "$BINDING_CONTEXT_PATH")
+    entries=$(jq -c '.[]' <<< "$binding_context") || return 1
 
-    jq -c '.[]' <<< "$binding_context" | while IFS= read -r entry; do
+    for entry in "${(@f)entries}"; do
         btype=$(jq -r '.type' <<< "$entry")
         binding=$(jq -r '.binding' <<< "$entry")
 
@@ -44,13 +46,17 @@ function :execute {
                         #! Startup catch-up: any managed Job already Succeeded gets
                         #! its completion propagated now, closing the window where a
                         #! Job finished while the operator was down.
-                        jq -c '.objects[]?.object // empty' <<< "$entry" | while IFS= read -r obj; do
-                            record_completion --object "$(jq -c <<< "$obj")"
+                        objects=$(jq -c '.objects[]?.object // empty' <<< "$entry") || { failed=1; continue; }
+                        for obj in "${(@f)objects}"; do
+                            [[ -n $obj ]] || continue
+                            record_completion --object "$obj" || failed=1
                         done
                         ;;
                     *)
-                        jq -c '.objects[]?.object // empty' <<< "$entry" | while IFS= read -r obj; do
-                            schedule --event-type added --object "$(jq -c <<< "$obj")" --listener "$binding"
+                        objects=$(jq -c '.objects[]?.object // empty' <<< "$entry") || { failed=1; continue; }
+                        for obj in "${(@f)objects}"; do
+                            [[ -n $obj ]] || continue
+                            schedule --event-type added --object "$obj" --listener "$binding" || failed=1
                         done
                         ;;
                 esac
@@ -58,23 +64,27 @@ function :execute {
             Event)
                 case $binding in
                     marginaljobs)
-                        printf '%s\n' "marginal: MarginalJob change detected, restarting to reconfigure"
-                        kill 1
-                        return
+                        reconfigure=1
                         ;;
                     marginal-managed-jobs)
                         object=$(jq -c '.object' <<< "$entry")
-                        record_completion --object "$object"
+                        record_completion --object "$object" || failed=1
                         ;;
                     *)
                         watch_event=$(jq -r '.watchEvent' <<< "$entry")
                         object=$(jq -c '.object' <<< "$entry")
-                        schedule --event-type "${watch_event:l}" --object "$object" --listener "$binding"
+                        schedule --event-type "${watch_event:l}" --object "$object" --listener "$binding" || failed=1
                         ;;
                 esac
                 ;;
         esac
     done
+    (( failed == 0 )) || return 1
+    if (( reconfigure )); then
+        printf '%s\n' "marginal: MarginalJob change detected, restarting to reconfigure"
+        kill 1 || return 1
+    fi
+    return 0
 }
 
 # vim: ft=zsh :
